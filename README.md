@@ -87,5 +87,5 @@ KAMRA/
 3. Click **Start Recording** to begin recording video (`KAMRA_VID_YYYYYMMDD_HHMMSS.mp4`). Click **Stop Recording** to finalize and save the file.
 4. Click any thumbnail in the **GALLERY** sidebar on the right to view your saved photos or play back recorded videos.
 
-5. ## Author
-6. **Kier Tan**
+## Author
+**Kier Tan**
