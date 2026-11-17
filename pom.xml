@@ -32,7 +32,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.0</version>
                 <configuration>
-                    <mainClass>com.mycompany.kamra.LaptopCamcorderApp</mainClass>
+                    <mainClass>com.mycompany.kamra.KamraUI</mainClass>
                 </configuration>
             </plugin>
         </plugins>
