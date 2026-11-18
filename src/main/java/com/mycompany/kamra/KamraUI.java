@@ -34,13 +34,13 @@ import javax.swing.JComboBox;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.bytedeco.javacv.FFmpegFrameRecorder;
 import org.bytedeco.javacv.Frame;
+import org.bytedeco.javacv.FrameGrabber;
 import org.bytedeco.javacv.Java2DFrameConverter;
 import org.bytedeco.javacv.OpenCVFrameGrabber;
 import org.bytedeco.javacv.OpenCVFrameConverter;
 import org.bytedeco.opencv.opencv_core.Mat;
 import org.bytedeco.opencv.opencv_core.Rect;
 import org.bytedeco.opencv.opencv_core.RectVector;
-import org.bytedeco.opencv.opencv_core.Size;
 import org.bytedeco.opencv.opencv_objdetect.CascadeClassifier;
 import static org.bytedeco.opencv.global.opencv_imgproc.*;
 
@@ -244,12 +244,10 @@ public class KamraUI extends javax.swing.JFrame {
 
                             SwingUtilities.invokeLater(() -> lblCamera.setIcon(icon));
                         }
-                    } catch (Exception frameEx) {
-                        frameEx.printStackTrace();
+                    } catch (IOException frameEx) {
                     }
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
+            } catch (FrameGrabber.Exception e) {
             } finally {
                 cleanup();
             }
@@ -291,7 +289,7 @@ public class KamraUI extends javax.swing.JFrame {
         } else {
             try { 
                 thumb = ImageIO.read(file); 
-            } catch (Exception ignored) {}
+            } catch (IOException ignored) {}
         }
 
         JLabel thumbLbl = new JLabel();
@@ -314,8 +312,7 @@ public class KamraUI extends javax.swing.JFrame {
             public void mouseClicked(MouseEvent e) {
                 try {
                     if (Desktop.isDesktopSupported()) Desktop.getDesktop().open(file);
-                } catch (Exception ex) {
-                    ex.printStackTrace();
+                } catch (IOException ex) {
                 }
             }
         });
@@ -327,8 +324,8 @@ public class KamraUI extends javax.swing.JFrame {
     
     private static void applyRetroFilter(BufferedImage image, Random rand) {
         if (image == null || image.getRaster() == null) return;
-        if (image.getRaster().getDataBuffer() instanceof DataBufferByte) {
-            byte[] pixels = ((DataBufferByte) image.getRaster().getDataBuffer()).getData();
+        if (image.getRaster().getDataBuffer() instanceof DataBufferByte dataBufferByte) {
+            byte[] pixels = dataBufferByte.getData();
             int channels = image.getColorModel().getNumComponents();
             if (channels >= 3) {
                 for (int i = 0; i < pixels.length; i += channels) {
@@ -404,8 +401,7 @@ public class KamraUI extends javax.swing.JFrame {
 
             File shadesFile = new File("assets/sunglasses.png");
             if (shadesFile.exists()) imgShades = ImageIO.read(shadesFile);
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (IOException e) {
         }
     }
     
@@ -420,7 +416,7 @@ public class KamraUI extends javax.swing.JFrame {
         try {
             if (recorder != null) { recorder.stop(); recorder.release(); }
             if (grabber != null) { grabber.stop(); grabber.release(); }
-        } catch (Exception ignored) {}
+        } catch (FFmpegFrameRecorder.Exception | FrameGrabber.Exception ignored) {}
     }
     
     /**
