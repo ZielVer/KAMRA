@@ -1,7 +1,3 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/GUIForms/JFrame.java to edit this template
- */
 package com.mycompany.kamra;
 
 import java.awt.Color;
@@ -52,44 +48,35 @@ public class KamraUI extends javax.swing.JFrame {
     
     private static final java.util.logging.Logger logger = java.util.logging.Logger.getLogger(KamraUI.class.getName());
 
-    // State control flags
     private volatile boolean isRecording = false;
     private volatile boolean requestSnapshot = false;
     private volatile boolean toggleRecordingRequested = false;
 
-    // Media & Camera Pipeline
     private static final File MEDIA_DIR = new File("kamra_media");
     private OpenCVFrameGrabber grabber;
     private FFmpegFrameRecorder recorder;
     private Thread cameraThread;
     private JPanel panelGallery;
     
-    // Filter Selection & AR Face Tracking
     private volatile String activeFilter = "Camcorder 90s";
     private JComboBox<String> cmbFilters;
     private CascadeClassifier faceDetector;
     private BufferedImage imgShades;
 
-    /**
-     * Creates new form KamraUI
-     */
     public KamraUI() {
         initComponents();
         
-        // Add Filter Selector Dropdown to bottom control panel (jPanel1)
         String[] filters = {"Camcorder 90s", "Shades", "No Filter"};
         cmbFilters = new JComboBox<>(filters);
         cmbFilters.addActionListener(e -> activeFilter = (String) cmbFilters.getSelectedItem());
         jPanel1.add(cmbFilters);
 
-        // Load Haar Cascade & PNG Stickers
         loadArAssets();
 
         if (!MEDIA_DIR.exists()) {
             MEDIA_DIR.mkdirs();
         }
 
-        // Configure inner gallery viewport panel inside NetBeans jScrollPane1
         panelGallery = new JPanel();
         panelGallery.setLayout(new BoxLayout(panelGallery, BoxLayout.Y_AXIS));
         panelGallery.setBackground(new Color(24, 24, 24));
@@ -98,10 +85,8 @@ public class KamraUI extends javax.swing.JFrame {
         jScrollPane1.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         jScrollPane1.getVerticalScrollBar().setUnitIncrement(16);
 
-        // Load existing captured media
         refreshGallery();
 
-        // Start background camera thread
         startCameraStream();
     }
     
@@ -141,7 +126,6 @@ public class KamraUI extends javax.swing.JFrame {
                         BufferedImage image = converter.convert(rawFrame);
                         if (image == null) continue;
 
-                        // Toggle Recording Logic
                         if (toggleRecordingRequested) {
                             toggleRecordingRequested = false;
                             if (!isRecording) {
@@ -176,47 +160,43 @@ public class KamraUI extends javax.swing.JFrame {
                             }
                         }
 
-                        // Capture snapshot of current filter choice for this frame
                         String currentFilter = activeFilter;
 
-                        // --- Apply Selected Filter ---
                         if ("Camcorder 90s".equals(currentFilter)) {
                             applyRetroFilter(image, rand);
+                            
+                            Graphics2D g2d = image.createGraphics();
+                            g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                            Font osdFont = new Font("Courier New", Font.BOLD, (int) (actualWidth * 0.035f));
+                            g2d.setFont(osdFont);
+
+                            int margin = (int) (actualWidth * 0.05f);
+                            int bottom = actualHeight - margin;
+
+                            Date now = new Date();
+                            drawShadowText(g2d, dateFormat.format(now).toUpperCase(Locale.US), margin, bottom - (int) (osdFont.getSize() * 1.2), Color.WHITE);
+                            drawShadowText(g2d, timeFormat.format(now).toUpperCase(Locale.US), margin, bottom, Color.WHITE);
+
+                            if (isRecording) {
+                                long elapsed = System.currentTimeMillis() - recordStartTime;
+                                long totalSecs = elapsed / 1000;
+                                String durationText = String.format("%02d:%02d:%02d", totalSecs / 3600, (totalSecs % 3600) / 60, totalSecs % 60);
+                                int textWidth = g2d.getFontMetrics().stringWidth(durationText);
+                                drawShadowText(g2d, durationText, actualWidth - margin - textWidth, bottom, new Color(220, 20, 20));
+
+                                if ((elapsed / 500) % 2 == 0) {
+                                    String rec = "REC ●";
+                                    drawShadowText(g2d, rec, actualWidth - margin - g2d.getFontMetrics().stringWidth(rec), margin + osdFont.getSize(), new Color(220, 20, 20));
+                                }
+                            } else {
+                                String stby = "STBY";
+                                drawShadowText(g2d, stby, actualWidth - margin - g2d.getFontMetrics().stringWidth(stby), margin + osdFont.getSize(), new Color(180, 180, 180));
+                            }
+                            g2d.dispose();
                         } else if ("Shades".equals(currentFilter)) {
                             applyFaceArFilter(rawFrame, image, toMatConverter, detectedFaces, grayMat, smallGray);
                         }
 
-                        // Draw Camcorder OSD Overlay
-                        Graphics2D g2d = image.createGraphics();
-                        g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-                        Font osdFont = new Font("Courier New", Font.BOLD, (int) (actualWidth * 0.035f));
-                        g2d.setFont(osdFont);
-
-                        int margin = (int) (actualWidth * 0.05f);
-                        int bottom = actualHeight - margin;
-
-                        Date now = new Date();
-                        drawShadowText(g2d, dateFormat.format(now).toUpperCase(Locale.US), margin, bottom - (int) (osdFont.getSize() * 1.2), Color.WHITE);
-                        drawShadowText(g2d, timeFormat.format(now).toUpperCase(Locale.US), margin, bottom, Color.WHITE);
-
-                        if (isRecording) {
-                            long elapsed = System.currentTimeMillis() - recordStartTime;
-                            long totalSecs = elapsed / 1000;
-                            String durationText = String.format("%02d:%02d:%02d", totalSecs / 3600, (totalSecs % 3600) / 60, totalSecs % 60);
-                            int textWidth = g2d.getFontMetrics().stringWidth(durationText);
-                            drawShadowText(g2d, durationText, actualWidth - margin - textWidth, bottom, new Color(220, 20, 20));
-
-                            if ((elapsed / 500) % 2 == 0) {
-                                String rec = "REC ●";
-                                drawShadowText(g2d, rec, actualWidth - margin - g2d.getFontMetrics().stringWidth(rec), margin + osdFont.getSize(), new Color(220, 20, 20));
-                            }
-                        } else {
-                            String stby = "STBY";
-                            drawShadowText(g2d, stby, actualWidth - margin - g2d.getFontMetrics().stringWidth(stby), margin + osdFont.getSize(), new Color(180, 180, 180));
-                        }
-                        g2d.dispose();
-
-                        // Snap Photo Snapshot
                         if (requestSnapshot) {
                             requestSnapshot = false;
                             String photoName = "KAMRA_IMG_" + fileDateFormat.format(new Date()) + ".png";
@@ -225,13 +205,11 @@ public class KamraUI extends javax.swing.JFrame {
                             SwingUtilities.invokeLater(() -> addMediaItemToGallery(photoFile));
                         }
 
-                        // Pipe frame to MP4 Recorder if active
                         if (isRecording && recorder != null) {
                             Frame processedFrame = converter.convert(image);
                             recorder.record(processedFrame);
                         }
 
-                        // Scale & Push to Center of lblCamera with maintained aspect ratio
                         int labelW = lblCamera.getWidth();
                         int labelH = lblCamera.getHeight();
                         if (labelW > 0 && labelH > 0) {
