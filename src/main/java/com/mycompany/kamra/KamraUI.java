@@ -58,20 +58,21 @@ public class KamraUI extends javax.swing.JFrame {
     private Thread cameraThread;
     private JPanel panelGallery;
     
-    private volatile String activeFilter = "Camcorder 90s";
-    private JComboBox<String> cmbFilters;
-    private CascadeClassifier faceDetector;
-    private BufferedImage imgShades;
+    private volatile Filter activeFilter;
+    private JComboBox<Filter> cmbFilters;
 
     public KamraUI() {
         initComponents();
         
-        String[] filters = {"Camcorder 90s", "Shades", "No Filter"};
+        Filter[] filters = {
+            new Camcorder90sFilter(),
+            new ShadesFilter(),
+            new NoFilter()
+        };
+        activeFilter = filters[0];
         cmbFilters = new JComboBox<>(filters);
-        cmbFilters.addActionListener(e -> activeFilter = (String) cmbFilters.getSelectedItem());
+        cmbFilters.addActionListener(e -> activeFilter = (Filter) cmbFilters.getSelectedItem());
         jPanel1.add(cmbFilters);
-
-        loadArAssets();
 
         if (!MEDIA_DIR.exists()) {
             MEDIA_DIR.mkdirs();
@@ -104,15 +105,7 @@ public class KamraUI extends javax.swing.JFrame {
                 }
 
                 Java2DFrameConverter converter = new Java2DFrameConverter();
-                OpenCVFrameConverter.ToMat toMatConverter = new OpenCVFrameConverter.ToMat();
-                RectVector detectedFaces = new RectVector();
-                Mat grayMat = new Mat();
-                Mat smallGray = new Mat();
 
-                Random rand = new Random();
-
-                SimpleDateFormat dateFormat = new SimpleDateFormat("MMM. dd yyyy", Locale.US);
-                SimpleDateFormat timeFormat = new SimpleDateFormat("hh:mm:ss a", Locale.US);
                 SimpleDateFormat fileDateFormat = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US);
 
                 long recordStartTime = 0;
@@ -160,41 +153,11 @@ public class KamraUI extends javax.swing.JFrame {
                             }
                         }
 
-                        String currentFilter = activeFilter;
-
-                        if ("Camcorder 90s".equals(currentFilter)) {
-                            applyRetroFilter(image, rand);
-                            
-                            Graphics2D g2d = image.createGraphics();
-                            g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-                            Font osdFont = new Font("Courier New", Font.BOLD, (int) (actualWidth * 0.035f));
-                            g2d.setFont(osdFont);
-
-                            int margin = (int) (actualWidth * 0.05f);
-                            int bottom = actualHeight - margin;
-
-                            Date now = new Date();
-                            drawShadowText(g2d, dateFormat.format(now).toUpperCase(Locale.US), margin, bottom - (int) (osdFont.getSize() * 1.2), Color.WHITE);
-                            drawShadowText(g2d, timeFormat.format(now).toUpperCase(Locale.US), margin, bottom, Color.WHITE);
-
-                            if (isRecording) {
-                                long elapsed = System.currentTimeMillis() - recordStartTime;
-                                long totalSecs = elapsed / 1000;
-                                String durationText = String.format("%02d:%02d:%02d", totalSecs / 3600, (totalSecs % 3600) / 60, totalSecs % 60);
-                                int textWidth = g2d.getFontMetrics().stringWidth(durationText);
-                                drawShadowText(g2d, durationText, actualWidth - margin - textWidth, bottom, new Color(220, 20, 20));
-
-                                if ((elapsed / 500) % 2 == 0) {
-                                    String rec = "REC ●";
-                                    drawShadowText(g2d, rec, actualWidth - margin - g2d.getFontMetrics().stringWidth(rec), margin + osdFont.getSize(), new Color(220, 20, 20));
-                                }
-                            } else {
-                                String stby = "STBY";
-                                drawShadowText(g2d, stby, actualWidth - margin - g2d.getFontMetrics().stringWidth(stby), margin + osdFont.getSize(), new Color(180, 180, 180));
-                            }
-                            g2d.dispose();
-                        } else if ("Shades".equals(currentFilter)) {
-                            applyFaceArFilter(rawFrame, image, toMatConverter, detectedFaces, grayMat, smallGray);
+                        Filter currentFilter = activeFilter;
+                        if (currentFilter != null) {
+                            currentFilter.apply(new FilterContext(
+                                    rawFrame, image, actualWidth, actualHeight, isRecording, recordStartTime
+                            ));
                         }
 
                         if (requestSnapshot) {
@@ -300,7 +263,90 @@ public class KamraUI extends javax.swing.JFrame {
         panelGallery.repaint();
     }
     
-    private static void applyRetroFilter(BufferedImage image, Random rand) {
+    private record FilterContext(
+        Frame rawFrame,
+        BufferedImage image,
+        int width,
+        int height,
+        boolean isRecording,
+        long recordStartTime
+) {}
+
+private static abstract class Filter {
+    private final String name;
+
+    protected Filter(String name) {
+        this.name = name;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public abstract void apply(FilterContext ctx);
+
+    @Override
+    public String toString() {
+        return name; // Displayed by JComboBox
+    }
+}
+
+private static class NoFilter extends Filter {
+    public NoFilter() {
+        super("No Filter");
+    }
+
+    @Override
+    public void apply(FilterContext ctx) {
+        // No-op
+    }
+}
+
+private static class Camcorder90sFilter extends Filter {
+    private final Random rand = new Random();
+    private final SimpleDateFormat dateFormat = new SimpleDateFormat("MMM. dd yyyy", Locale.US);
+    private final SimpleDateFormat timeFormat = new SimpleDateFormat("hh:mm:ss a", Locale.US);
+
+    public Camcorder90sFilter() {
+        super("Camcorder 90s");
+    }
+
+    @Override
+    public void apply(FilterContext ctx) {
+        BufferedImage image = ctx.image();
+        applyRetroFilter(image);
+
+        Graphics2D g2d = image.createGraphics();
+        g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        Font osdFont = new Font("Courier New", Font.BOLD, (int) (ctx.width() * 0.035f));
+        g2d.setFont(osdFont);
+
+        int margin = (int) (ctx.width() * 0.05f);
+        int bottom = ctx.height() - margin;
+
+        Date now = new Date();
+        drawShadowText(g2d, dateFormat.format(now).toUpperCase(Locale.US), margin, bottom - (int) (osdFont.getSize() * 1.2), Color.WHITE);
+        drawShadowText(g2d, timeFormat.format(now).toUpperCase(Locale.US), margin, bottom, Color.WHITE);
+
+        if (ctx.isRecording()) {
+            long elapsed = System.currentTimeMillis() - ctx.recordStartTime();
+            long totalSecs = elapsed / 1000;
+            String durationText = String.format("%02d:%02d:%02d", totalSecs / 3600, (totalSecs % 3600) / 60, totalSecs % 60);
+            int textWidth = g2d.getFontMetrics().stringWidth(durationText);
+            drawShadowText(g2d, durationText, ctx.width() - margin - textWidth, bottom, new Color(220, 20, 20));
+
+            if ((elapsed / 500) % 2 == 0) {
+                String rec = "REC ●";
+                drawShadowText(g2d, rec, ctx.width() - margin - g2d.getFontMetrics().stringWidth(rec), margin + osdFont.getSize(), new Color(220, 20, 20));
+            }
+        } else {
+            String stby = "STBY";
+            drawShadowText(g2d, stby, ctx.width() - margin - g2d.getFontMetrics().stringWidth(stby), margin + osdFont.getSize(), new Color(180, 180, 180));
+        }
+        g2d.dispose();
+    }
+
+    private void applyRetroFilter(BufferedImage image) {
         if (image == null || image.getRaster() == null) return;
         if (image.getRaster().getDataBuffer() instanceof DataBufferByte dataBufferByte) {
             byte[] pixels = dataBufferByte.getData();
@@ -319,32 +365,71 @@ public class KamraUI extends javax.swing.JFrame {
             }
         }
     }
-    
-    private void applyFaceArFilter(Frame rawFrame, BufferedImage image, OpenCVFrameConverter.ToMat toMatConverter, RectVector faces, Mat grayMat, Mat smallGray) {
+
+    private static void drawShadowText(Graphics2D g2d, String text, int x, int y, Color color) {
+        g2d.setColor(Color.BLACK);
+        g2d.drawString(text, x + 2, y + 2);
+        g2d.setColor(color);
+        g2d.drawString(text, x, y);
+    }
+}
+
+private static class ShadesFilter extends Filter {
+    private final OpenCVFrameConverter.ToMat toMatConverter = new OpenCVFrameConverter.ToMat();
+    private final RectVector detectedFaces = new RectVector();
+    private final Mat grayMat = new Mat();
+    private final Mat smallGray = new Mat();
+    private CascadeClassifier faceDetector;
+    private BufferedImage imgShades;
+
+    public ShadesFilter() {
+        super("Shades");
+        loadArAssets();
+    }
+
+    private void loadArAssets() {
+        try {
+            File xmlFile = new File("assets/haarcascade_frontalface_default.xml");
+            if (xmlFile.exists()) {
+                faceDetector = new CascadeClassifier(xmlFile.getAbsolutePath());
+            } else {
+                System.err.println("Warning: haarcascade_frontalface_default.xml not found in assets/");
+            }
+
+            File shadesFile = new File("assets/sunglasses.png");
+            if (shadesFile.exists()) {
+                imgShades = ImageIO.read(shadesFile);
+            }
+        } catch (IOException e) {
+            logger.log(java.util.logging.Level.WARNING, "Failed to load AR assets", e);
+        }
+    }
+
+    @Override
+    public void apply(FilterContext ctx) {
         if (faceDetector == null || faceDetector.empty()) return;
 
-        Mat colorMat = toMatConverter.convert(rawFrame);
+        Mat colorMat = toMatConverter.convert(ctx.rawFrame());
         if (colorMat == null || colorMat.empty()) return;
 
-        // Downscale by 50% in grayscale for fast face detection
         cvtColor(colorMat, grayMat, COLOR_BGR2GRAY);
         org.bytedeco.opencv.global.opencv_imgproc.resize(
-    grayMat, 
-    smallGray, 
-    new org.bytedeco.opencv.opencv_core.Size(grayMat.cols() / 2, grayMat.rows() / 2), 
-    0, 0, INTER_LINEAR
-);
+                grayMat,
+                smallGray,
+                new org.bytedeco.opencv.opencv_core.Size(grayMat.cols() / 2, grayMat.rows() / 2),
+                0, 0, INTER_LINEAR
+        );
         equalizeHist(smallGray, smallGray);
 
-        faceDetector.detectMultiScale(smallGray, faces, 1.1, 4, 0,
+        faceDetector.detectMultiScale(smallGray, detectedFaces, 1.1, 4, 0,
                 new org.bytedeco.opencv.opencv_core.Size(40, 40),
                 new org.bytedeco.opencv.opencv_core.Size());
 
-        Graphics2D g2d = image.createGraphics();
+        Graphics2D g2d = ctx.image().createGraphics();
         g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
 
-        for (long i = 0; i < faces.size(); i++) {
-            Rect r = faces.get(i);
+        for (long i = 0; i < detectedFaces.size(); i++) {
+            Rect r = detectedFaces.get(i);
             int fx = r.x() * 2;
             int fy = r.y() * 2;
             int fw = r.width() * 2;
@@ -367,28 +452,7 @@ public class KamraUI extends javax.swing.JFrame {
 
         g2d.dispose();
     }
-    
-    private void loadArAssets() {
-        try {
-            File xmlFile = new File("assets/haarcascade_frontalface_default.xml");
-            if (xmlFile.exists()) {
-                faceDetector = new CascadeClassifier(xmlFile.getAbsolutePath());
-            } else {
-                System.err.println("Warning: haarcascade_frontalface_default.xml not found in assets/");
-            }
-
-            File shadesFile = new File("assets/sunglasses.png");
-            if (shadesFile.exists()) imgShades = ImageIO.read(shadesFile);
-        } catch (IOException e) {
-        }
-    }
-    
-    private static void drawShadowText(Graphics2D g2d, String text, int x, int y, Color color) {
-        g2d.setColor(Color.BLACK);
-        g2d.drawString(text, x + 2, y + 2);
-        g2d.setColor(color);
-        g2d.drawString(text, x, y);
-    }
+}
 
     private void cleanup() {
         try {
@@ -415,6 +479,7 @@ public class KamraUI extends javax.swing.JFrame {
         jScrollPane1 = new javax.swing.JScrollPane();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
+        setTitle("KAMRA");
 
         lblCamera.setBackground(new java.awt.Color(20, 20, 20));
         lblCamera.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
