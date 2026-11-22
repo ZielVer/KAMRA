@@ -1,5 +1,11 @@
 package com.mycompany.kamra;
 
+import java.awt.BorderLayout;
+import java.awt.GridLayout;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Desktop;
@@ -16,6 +22,7 @@ import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.Random;
 import javax.imageio.ImageIO;
@@ -47,6 +54,10 @@ import static org.bytedeco.opencv.global.opencv_imgproc.*;
 public class KamraUI extends javax.swing.JFrame {
     
     private static final java.util.logging.Logger logger = java.util.logging.Logger.getLogger(KamraUI.class.getName());
+    
+    private MediaDatabase mediaDb;
+    private JCheckBox chkFavoritesOnly;
+    private static final DateTimeFormatter DISPLAY_DATE_FMT = DateTimeFormatter.ofPattern("MMM dd, yyyy hh:mm a", Locale.US);
 
     private volatile boolean isRecording = false;
     private volatile boolean requestSnapshot = false;
@@ -77,6 +88,22 @@ public class KamraUI extends javax.swing.JFrame {
         if (!MEDIA_DIR.exists()) {
             MEDIA_DIR.mkdirs();
         }
+        
+        mediaDb = new MediaDatabase(new File(MEDIA_DIR, "kamra.db"));
+        mediaDb.syncExistingFiles(MEDIA_DIR);
+
+        JPanel galleryHeader = new JPanel(new BorderLayout());
+        galleryHeader.setBackground(new Color(24, 24, 24));
+        jLabel1.setForeground(Color.WHITE);
+        galleryHeader.add(jLabel1, BorderLayout.CENTER);
+
+        chkFavoritesOnly = new JCheckBox("★ Only");
+        chkFavoritesOnly.setForeground(new Color(255, 204, 0));
+        chkFavoritesOnly.setOpaque(false);
+        chkFavoritesOnly.addActionListener(e -> refreshGallery());
+        galleryHeader.add(chkFavoritesOnly, BorderLayout.EAST);
+
+        jPanel2.add(galleryHeader, BorderLayout.NORTH);
 
         panelGallery = new JPanel();
         panelGallery.setLayout(new BoxLayout(panelGallery, BoxLayout.Y_AXIS));
@@ -110,6 +137,8 @@ public class KamraUI extends javax.swing.JFrame {
 
                 long recordStartTime = 0;
                 File currentVideoFile = null;
+                LocalDateTime recordStartDateTime = null;
+                String recordStartFilterName = "No Filter";
 
                 while (!Thread.currentThread().isInterrupted() && isDisplayable()) {
                     try {
@@ -122,34 +151,24 @@ public class KamraUI extends javax.swing.JFrame {
                         if (toggleRecordingRequested) {
                             toggleRecordingRequested = false;
                             if (!isRecording) {
-                                String fileName = "KAMRA_VID_" + fileDateFormat.format(new Date()) + ".mp4";
-                                currentVideoFile = new File(MEDIA_DIR, fileName);
-                                recorder = new FFmpegFrameRecorder(currentVideoFile, actualWidth, actualHeight);
-                                recorder.setFrameRate(30);
-                                recorder.setVideoCodecName("libx264");
-                                recorder.setFormat("mp4");
-                                recorder.start();
-
                                 recordStartTime = System.currentTimeMillis();
+                                recordStartDateTime = LocalDateTime.now();
+                                Filter f = activeFilter;
+                                recordStartFilterName = (f != null) ? f.getName() : "No Filter";
                                 isRecording = true;
-                                SwingUtilities.invokeLater(() -> {
-                                    btnRecord.setText("Stop Recording");
-                                    btnRecord.setBackground(new Color(200, 30, 30));
-                                });
                             } else {
-                                isRecording = false;
-                                if (recorder != null) {
-                                    recorder.stop();
-                                    recorder.release();
-                                    recorder = null;
-                                }
-                                SwingUtilities.invokeLater(() -> {
-                                    btnRecord.setText("Start Recording");
-                                    btnRecord.setBackground(new Color(45, 45, 45));
-                                });
-
                                 final File recordedFile = currentVideoFile;
-                                SwingUtilities.invokeLater(() -> addMediaItemToGallery(recordedFile));
+                                MediaDatabase.MediaItem savedVideo = mediaDb.insertMedia(
+                                        recordedFile.getName(),
+                                        "VIDEO",
+                                        recordStartDateTime != null ? recordStartDateTime : LocalDateTime.now(),
+                                        recordStartFilterName
+                                );
+                                SwingUtilities.invokeLater(() -> {
+                                    if (!chkFavoritesOnly.isSelected()) {
+                                        addMediaItemToGallery(recordedFile, savedVideo);
+                                    }
+                                });
                             }
                         }
 
@@ -165,7 +184,19 @@ public class KamraUI extends javax.swing.JFrame {
                             String photoName = "KAMRA_IMG_" + fileDateFormat.format(new Date()) + ".png";
                             File photoFile = new File(MEDIA_DIR, photoName);
                             ImageIO.write(image, "PNG", photoFile);
-                            SwingUtilities.invokeLater(() -> addMediaItemToGallery(photoFile));
+
+                            String filterName = (currentFilter != null) ? currentFilter.getName() : "No Filter";
+                            MediaDatabase.MediaItem savedPhoto = mediaDb.insertMedia(
+                                    photoName,
+                                    "PHOTO",
+                                    LocalDateTime.now(),
+                                    filterName
+                            );
+                            SwingUtilities.invokeLater(() -> {
+                                if (!chkFavoritesOnly.isSelected()) {
+                                    addMediaItemToGallery(photoFile, savedPhoto);
+                                }
+                            });
                         }
 
                         if (isRecording && recorder != null) {
@@ -197,71 +228,119 @@ public class KamraUI extends javax.swing.JFrame {
         cameraThread.start();
     }
     
-    private void refreshGallery() {
-        panelGallery.removeAll();
-        File[] files = MEDIA_DIR.listFiles((dir, name) -> name.endsWith(".png") || name.endsWith(".mp4"));
-        if (files != null) {
-            java.util.Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
-            for (File f : files) {
-                addMediaItemToGallery(f);
+private void refreshGallery() {
+    panelGallery.removeAll();
+    List<MediaDatabase.MediaItem> items = mediaDb.getMediaItems(
+            chkFavoritesOnly != null && chkFavoritesOnly.isSelected()
+    );
+    // Insert in reverse if using index 0, or append in order (DESC from SQL)
+    for (MediaDatabase.MediaItem meta : items) {
+        File file = new File(MEDIA_DIR, meta.fileName());
+        if (file.exists()) {
+            panelGallery.add(createGalleryCard(file, meta));
+        }
+    }
+    panelGallery.revalidate();
+    panelGallery.repaint();
+}
+
+private void addMediaItemToGallery(File file, MediaDatabase.MediaItem meta) {
+    panelGallery.add(createGalleryCard(file, meta), 0);
+    panelGallery.revalidate();
+    panelGallery.repaint();
+}
+
+private JPanel createGalleryCard(File file, MediaDatabase.MediaItem meta) {
+    boolean isVideo = "VIDEO".equals(meta.mediaType());
+    JPanel item = new JPanel(new BorderLayout(4, 2));
+    item.setMaximumSize(new Dimension(200, 155));
+    item.setPreferredSize(new Dimension(200, 155));
+    item.setBackground(new Color(35, 35, 35));
+    item.setBorder(BorderFactory.createLineBorder(new Color(60, 60, 60), 1));
+
+    // Top bar: Capture datetime + Star Favorite toggle
+    JPanel topBar = new JPanel(new BorderLayout());
+    topBar.setOpaque(false);
+
+    JLabel dateLbl = new JLabel(" " + meta.capturedAt().format(DISPLAY_DATE_FMT));
+    dateLbl.setFont(new Font("SansSerif", Font.PLAIN, 10));
+    dateLbl.setForeground(new Color(190, 190, 190));
+    topBar.add(dateLbl, BorderLayout.CENTER);
+
+    final boolean[] isFav = {meta.favorite()};
+    JButton btnStar = new JButton(isFav[0] ? "★" : "☆");
+    btnStar.setFocusPainted(false);
+    btnStar.setBorderPainted(false);
+    btnStar.setContentAreaFilled(false);
+    btnStar.setCursor(new Cursor(Cursor.HAND_CURSOR));
+    btnStar.setForeground(isFav[0] ? new Color(255, 204, 0) : Color.GRAY);
+    btnStar.setToolTipText("Toggle Favorite");
+    btnStar.addActionListener(e -> {
+        isFav[0] = !isFav[0];
+        mediaDb.setFavorite(meta.fileName(), isFav[0]);
+        btnStar.setText(isFav[0] ? "★" : "☆");
+        btnStar.setForeground(isFav[0] ? new Color(255, 204, 0) : Color.GRAY);
+        if (chkFavoritesOnly.isSelected() && !isFav[0]) {
+            refreshGallery();
+        }
+    });
+    topBar.add(btnStar, BorderLayout.EAST);
+    item.add(topBar, BorderLayout.NORTH);
+
+    // Center: Thumbnail (clicking opens the file)
+    BufferedImage thumb = null;
+    if (isVideo) {
+        try (FFmpegFrameGrabber fg = new FFmpegFrameGrabber(file)) {
+            fg.start();
+            Frame f = fg.grabImage();
+            if (f != null) thumb = new Java2DFrameConverter().convert(f);
+            fg.stop();
+        } catch (Exception ignored) {}
+    } else {
+        try {
+            thumb = ImageIO.read(file);
+        } catch (IOException ignored) {}
+    }
+
+    JLabel thumbLbl = new JLabel();
+    thumbLbl.setHorizontalAlignment(SwingConstants.CENTER);
+    thumbLbl.setCursor(new Cursor(Cursor.HAND_CURSOR));
+    if (thumb != null) {
+        thumbLbl.setIcon(new ImageIcon(thumb.getScaledInstance(170, 88, Image.SCALE_SMOOTH)));
+    } else {
+        thumbLbl.setText(isVideo ? "[VIDEO]" : "[PHOTO]");
+        thumbLbl.setForeground(Color.GRAY);
+    }
+    thumbLbl.addMouseListener(new MouseAdapter() {
+        @Override
+        public void mouseClicked(MouseEvent e) {
+            try {
+                if (Desktop.isDesktopSupported()) Desktop.getDesktop().open(file);
+            } catch (IOException ex) {
+                logger.log(java.util.logging.Level.WARNING, "Unable to open file", ex);
             }
         }
-        panelGallery.revalidate();
-        panelGallery.repaint();
-    }
-    
-    private void addMediaItemToGallery(File file) {
-        boolean isVideo = file.getName().endsWith(".mp4");
-        JPanel item = new JPanel(new java.awt.BorderLayout());
-        item.setMaximumSize(new Dimension(190, 130));
-        item.setPreferredSize(new Dimension(190, 130));
-        item.setBackground(new Color(35, 35, 35));
-        item.setBorder(BorderFactory.createLineBorder(new Color(60, 60, 60), 1));
-        item.setCursor(new Cursor(Cursor.HAND_CURSOR));
+    });
+    item.add(thumbLbl, BorderLayout.CENTER);
 
-        BufferedImage thumb = null;
-        if (isVideo) {
-            try (FFmpegFrameGrabber fg = new FFmpegFrameGrabber(file)) {
-                fg.start();
-                Frame f = fg.grabImage();
-                if (f != null) thumb = new Java2DFrameConverter().convert(f);
-                fg.stop();
-            } catch (Exception ignored) {}
-        } else {
-            try { 
-                thumb = ImageIO.read(file); 
-            } catch (IOException ignored) {}
-        }
+    // Bottom: Filename + Filter metadata
+    JPanel footer = new JPanel(new GridLayout(2, 1));
+    footer.setOpaque(false);
 
-        JLabel thumbLbl = new JLabel();
-        thumbLbl.setHorizontalAlignment(SwingConstants.CENTER);
-        if (thumb != null) {
-            thumbLbl.setIcon(new ImageIcon(thumb.getScaledInstance(170, 90, Image.SCALE_SMOOTH)));
-        } else {
-            thumbLbl.setText(isVideo ? "[VIDEO]" : "[PHOTO]");
-            thumbLbl.setForeground(Color.GRAY);
-        }
-        item.add(thumbLbl, java.awt.BorderLayout.CENTER);
+    JLabel nameLbl = new JLabel((isVideo ? "🎬 " : "📷 ") + meta.fileName(), SwingConstants.CENTER);
+    nameLbl.setFont(new Font("Monospaced", Font.PLAIN, 10));
+    nameLbl.setForeground(Color.LIGHT_GRAY);
 
-        JLabel nameLbl = new JLabel((isVideo ? "🎬 " : "📷 ") + file.getName(), SwingConstants.CENTER);
-        nameLbl.setFont(new Font("Monospaced", Font.PLAIN, 10));
-        nameLbl.setForeground(Color.LIGHT_GRAY);
-        item.add(nameLbl, java.awt.BorderLayout.SOUTH);
+    JLabel metaLbl = new JLabel(meta.metadataNote(), SwingConstants.CENTER);
+    metaLbl.setFont(new Font("SansSerif", Font.ITALIC, 10));
+    metaLbl.setForeground(new Color(140, 190, 255));
 
-        item.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                try {
-                    if (Desktop.isDesktopSupported()) Desktop.getDesktop().open(file);
-                } catch (IOException ex) {
-                }
-            }
-        });
+    footer.add(nameLbl);
+    footer.add(metaLbl);
+    item.add(footer, BorderLayout.SOUTH);
 
-        panelGallery.add(item, 0);
-        panelGallery.revalidate();
-        panelGallery.repaint();
-    }
+    return item;
+}
     
     private record FilterContext(
         Frame rawFrame,
