@@ -78,6 +78,8 @@ public class KamraUI extends javax.swing.JFrame {
         Filter[] filters = {
             new Camcorder90sFilter(),
             new ShadesFilter(),
+            new DogFilter(),
+            new NameKierFilter(),
             new NoFilter()
         };
         activeFilter = filters[0];
@@ -342,13 +344,13 @@ private JPanel createGalleryCard(File file, MediaDatabase.MediaItem meta) {
     return item;
 }
     
-    private record FilterContext(
-        Frame rawFrame,
-        BufferedImage image,
-        int width,
-        int height,
-        boolean isRecording,
-        long recordStartTime
+private record FilterContext(
+    Frame rawFrame,
+    BufferedImage image,
+    int width,
+    int height,
+    boolean isRecording,
+    long recordStartTime
 ) {}
 
 private static abstract class Filter {
@@ -526,6 +528,184 @@ private static class ShadesFilter extends Filter {
                 g2d.fillRect(shadesX, shadesY, shadesW, shadesH / 4);
                 g2d.fillRect(shadesX + (int) (shadesW * 0.08), shadesY, (int) (shadesW * 0.36), shadesH);
                 g2d.fillRect(shadesX + (int) (shadesW * 0.56), shadesY, (int) (shadesW * 0.36), shadesH);
+            }
+        }
+
+        g2d.dispose();
+    }
+}
+
+private static class DogFilter extends Filter {
+    private final OpenCVFrameConverter.ToMat toMatConverter = new OpenCVFrameConverter.ToMat();
+    private final RectVector detectedFaces = new RectVector();
+    //private final RectVector detectedMouths = new RectVector();
+    private final Mat grayMat = new Mat();
+    private final Mat smallGray = new Mat();
+    
+    private CascadeClassifier faceDetector;
+    //private CascadeClassifier mouthDetector;
+    private BufferedImage imgDog;
+    //private BufferedImage imgTongue;
+
+    public DogFilter() {
+        super("Dog");
+        loadArAssets();
+    }
+
+    private void loadArAssets() {
+        try {
+            File faceXml = new File("assets/haarcascade_frontalface_default.xml");
+            if (faceXml.exists()) {
+                faceDetector = new CascadeClassifier(faceXml.getAbsolutePath());
+            } else {
+                System.err.println("Warning: haarcascade_frontalface_default.xml not found in assets/");
+            }
+            /*
+            File mouthXml = new File("assets/haarcascade_mcs_mouth.xml");
+            if (mouthXml.exists()) {
+                mouthDetector = new CascadeClassifier(mouthXml.getAbsolutePath());
+            } else {
+                System.err.println("Warning: haarcascade_mcs_mouth.xml not found in assets/");
+            }
+            */
+            File dogFile = new File("assets/dog-filter.png");
+            if (dogFile.exists()) {
+                imgDog = ImageIO.read(dogFile);
+            }
+            /*
+            File tongueFile = new File("assets/dog-tongue.png");
+            if (tongueFile.exists()) {
+                imgTongue = ImageIO.read(tongueFile);
+            }
+            */
+        } catch (IOException e) {
+            logger.log(java.util.logging.Level.WARNING, "Failed to load AR assets", e);
+        }
+    }
+
+    @Override
+    public void apply(FilterContext ctx) {
+        if (faceDetector == null || faceDetector.empty()) return;
+
+        Mat colorMat = toMatConverter.convert(ctx.rawFrame());
+        if (colorMat == null || colorMat.empty()) return;
+
+        cvtColor(colorMat, grayMat, COLOR_BGR2GRAY);
+        org.bytedeco.opencv.global.opencv_imgproc.resize(
+                grayMat,
+                smallGray,
+                new org.bytedeco.opencv.opencv_core.Size(grayMat.cols() / 2, grayMat.rows() / 2),
+                0, 0, INTER_LINEAR
+        );
+        equalizeHist(smallGray, smallGray);
+
+        faceDetector.detectMultiScale(smallGray, detectedFaces, 1.1, 4, 0,
+                new org.bytedeco.opencv.opencv_core.Size(40, 40),
+                new org.bytedeco.opencv.opencv_core.Size());
+
+        Graphics2D g2d = ctx.image().createGraphics();
+        g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+
+        for (long i = 0; i < detectedFaces.size(); i++) {
+            Rect r = detectedFaces.get(i);
+            int fx = r.x() * 2;
+            int fy = r.y() * 2;
+            int fw = r.width() * 2;
+            int fh = r.height() * 2;
+
+            int dogW = (int) (fw * 1.35);
+            int dogH = (int) (fh * 1.15);
+            int dogX = fx + (fw - dogW) / 2;
+            int dogY = fy - (int) (fh * 0.40);
+
+            if (imgDog != null) {
+                g2d.drawImage(imgDog, dogX, dogY, dogW, dogH, null);
+            } else {
+                g2d.setColor(Color.BLACK);
+                g2d.fillRect(dogX, dogY, dogW, dogH / 4);
+                g2d.fillRect(dogX + (int) (dogW * 0.08), dogY, (int) (dogW * 0.36), dogH);
+                g2d.fillRect(dogX + (int) (dogW * 0.56), dogY, (int) (dogW * 0.36), dogH);
+            }
+                
+        }
+
+        g2d.dispose();
+    }
+}
+
+private static class NameKierFilter extends Filter {
+    private final OpenCVFrameConverter.ToMat toMatConverter = new OpenCVFrameConverter.ToMat();
+    private final RectVector detectedFaces = new RectVector();
+    private final Mat grayMat = new Mat();
+    private final Mat smallGray = new Mat();
+    private CascadeClassifier faceDetector;
+    private BufferedImage imgNameKier;
+
+    public NameKierFilter() {
+        super("Kier Tan");
+        loadArAssets();
+    }
+
+    private void loadArAssets() {
+        try {
+            File xmlFile = new File("assets/haarcascade_frontalface_default.xml");
+            if (xmlFile.exists()) {
+                faceDetector = new CascadeClassifier(xmlFile.getAbsolutePath());
+            } else {
+                System.err.println("Warning: haarcascade_frontalface_default.xml not found in assets/");
+            }
+
+            File kierFile = new File("assets/nametag-kier-tan.png");
+            if (kierFile.exists()) {
+                imgNameKier = ImageIO.read(kierFile);
+            }
+        } catch (IOException e) {
+            logger.log(java.util.logging.Level.WARNING, "Failed to load AR assets", e);
+        }
+    }
+
+    @Override
+    public void apply(FilterContext ctx) {
+        if (faceDetector == null || faceDetector.empty()) return;
+
+        Mat colorMat = toMatConverter.convert(ctx.rawFrame());
+        if (colorMat == null || colorMat.empty()) return;
+
+        cvtColor(colorMat, grayMat, COLOR_BGR2GRAY);
+        org.bytedeco.opencv.global.opencv_imgproc.resize(
+                grayMat,
+                smallGray,
+                new org.bytedeco.opencv.opencv_core.Size(grayMat.cols() / 2, grayMat.rows() / 2),
+                0, 0, INTER_LINEAR
+        );
+        equalizeHist(smallGray, smallGray);
+
+        faceDetector.detectMultiScale(smallGray, detectedFaces, 1.1, 4, 0,
+                new org.bytedeco.opencv.opencv_core.Size(40, 40),
+                new org.bytedeco.opencv.opencv_core.Size());
+
+        Graphics2D g2d = ctx.image().createGraphics();
+        g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+
+        for (long i = 0; i < detectedFaces.size(); i++) {
+            Rect r = detectedFaces.get(i);
+            int fx = r.x() * 2;
+            int fy = r.y() * 2;
+            int fw = r.width() * 2;
+            int fh = r.height() * 2;
+
+            int nameKierW = (int) (fw * 0.90);
+            int nameKierH = (int) (fh * 0.30);
+            int nameKierX = fx + (fw - nameKierW) / 2;
+            int nameKierY = fy - (int) (fh * 0.40);
+
+            if (imgNameKier != null) {
+                g2d.drawImage(imgNameKier, nameKierX, nameKierY, nameKierW, nameKierH, null);
+            } else {
+                g2d.setColor(Color.BLACK);
+                g2d.fillRect(nameKierX, nameKierY, nameKierW, nameKierH / 4);
+                g2d.fillRect(nameKierX + (int) (nameKierW * 0.08), nameKierY, (int) (nameKierW * 0.36), nameKierH);
+                g2d.fillRect(nameKierX + (int) (nameKierW * 0.56), nameKierY, (int) (nameKierW * 0.36), nameKierH);
             }
         }
 
