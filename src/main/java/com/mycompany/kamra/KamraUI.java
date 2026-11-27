@@ -80,6 +80,7 @@ public class KamraUI extends javax.swing.JFrame {
             new ShadesFilter(),
             new DogFilter(),
             new NameKierFilter(),
+            new GuessWhoFilter(),
             new NoFilter()
         };
         activeFilter = filters[0];
@@ -706,6 +707,86 @@ private static class NameKierFilter extends Filter {
                 g2d.fillRect(nameKierX, nameKierY, nameKierW, nameKierH / 4);
                 g2d.fillRect(nameKierX + (int) (nameKierW * 0.08), nameKierY, (int) (nameKierW * 0.36), nameKierH);
                 g2d.fillRect(nameKierX + (int) (nameKierW * 0.56), nameKierY, (int) (nameKierW * 0.36), nameKierH);
+            }
+        }
+
+        g2d.dispose();
+    }
+}
+
+private static class GuessWhoFilter extends Filter {
+    private final OpenCVFrameConverter.ToMat toMatConverter = new OpenCVFrameConverter.ToMat();
+    private final RectVector detectedFaces = new RectVector();
+    private final Mat grayMat = new Mat();
+    private final Mat smallGray = new Mat();
+    private CascadeClassifier faceDetector;
+    private BufferedImage imgHands;
+
+    public GuessWhoFilter() {
+        super("Guess Who");
+        loadArAssets();
+    }
+
+    private void loadArAssets() {
+        try {
+            File xmlFile = new File("assets/haarcascade_frontalface_default.xml");
+            if (xmlFile.exists()) {
+                faceDetector = new CascadeClassifier(xmlFile.getAbsolutePath());
+            } else {
+                System.err.println("Warning: haarcascade_frontalface_default.xml not found in assets/");
+            }
+
+            File shadesFile = new File("assets/hands.png");
+            if (shadesFile.exists()) {
+                imgHands = ImageIO.read(shadesFile);
+            }
+        } catch (IOException e) {
+            logger.log(java.util.logging.Level.WARNING, "Failed to load AR assets", e);
+        }
+    }
+
+    @Override
+    public void apply(FilterContext ctx) {
+        if (faceDetector == null || faceDetector.empty()) return;
+
+        Mat colorMat = toMatConverter.convert(ctx.rawFrame());
+        if (colorMat == null || colorMat.empty()) return;
+
+        cvtColor(colorMat, grayMat, COLOR_BGR2GRAY);
+        org.bytedeco.opencv.global.opencv_imgproc.resize(
+                grayMat,
+                smallGray,
+                new org.bytedeco.opencv.opencv_core.Size(grayMat.cols() / 2, grayMat.rows() / 2),
+                0, 0, INTER_LINEAR
+        );
+        equalizeHist(smallGray, smallGray);
+
+        faceDetector.detectMultiScale(smallGray, detectedFaces, 1.1, 4, 0,
+                new org.bytedeco.opencv.opencv_core.Size(40, 40),
+                new org.bytedeco.opencv.opencv_core.Size());
+
+        Graphics2D g2d = ctx.image().createGraphics();
+        g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+
+        for (long i = 0; i < detectedFaces.size(); i++) {
+            Rect r = detectedFaces.get(i);
+            int fx = r.x() * 2;
+            int fy = r.y() * 2;
+            int fw = r.width() * 2;
+            int fh = r.height() * 2;
+
+            int handsW = (int) (fw * 1.20);
+            int handsH = (int) (fh * 1);
+            int handsX = fx + (fw - handsW) / 2;
+            int handsY = fy + (int) (fh * 0.01);
+
+            if (imgHands != null) {
+                g2d.drawImage(imgHands, handsX, handsY, handsW, handsH, null);
+            } else {
+                g2d.setColor(Color.BLACK);
+                g2d.fillRect(handsX, handsY, handsW, handsH / 4);
+                g2d.fillRect(handsX + (int) (handsW * 0.08), handsY, (int) (handsW * 0.36), handsH);
+                g2d.fillRect(handsX + (int) (handsW * 0.56), handsY, (int) (handsW * 0.36), handsH);
             }
         }
 
